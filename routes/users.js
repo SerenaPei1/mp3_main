@@ -13,57 +13,38 @@ module.exports = function (router) {
         var limit = 0;
 
         if (req.query.where) {
-            try {
-                where = JSON.parse(req.query.where);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid where parameter", data: "JSON parsing error" });
-            }
+            try { where = JSON.parse(req.query.where); }
+            catch (e) { return res.status(400).json({ message: "Invalid where parameter", data: "JSON parsing error" }); }
         }
 
         if (req.query.sort) {
-            try {
-                sort = JSON.parse(req.query.sort);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid sort parameter", data: "JSON parsing error" });
-            }
+            try { sort = JSON.parse(req.query.sort); }
+            catch (e) { return res.status(400).json({ message: "Invalid sort parameter", data: "JSON parsing error" }); }
         }
 
         if (req.query.select) {
-            try {
-                select = JSON.parse(req.query.select);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" });
-            }
+            try { select = JSON.parse(req.query.select); }
+            catch (e) { return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" }); }
         }
 
-        if (req.query.skip) {
-            skip = parseInt(req.query.skip);
-        }
+        if (req.query.skip) skip = parseInt(req.query.skip);
+        if (req.query.limit) limit = parseInt(req.query.limit);
 
-        if (req.query.limit) {
-            limit = parseInt(req.query.limit);
-        }
-
-        if (req.query.count === 'true') {
-            User.countDocuments(where).exec(function (err, count) {
-                if (err) {
-                    return res.status(500).json({ message: "Internal Server Error", data: "Failed to count users" });
-                }
-                return res.status(200).json({ message: "OK", data: { count: count } });
-            });
-        } else {
-            var query = User.find(where).select(select).sort(sort).skip(skip);
-            if (limit > 0) {
-                query = query.limit(limit);
-            }
-
-            query.exec(function (err, users) {
-                if (err) {
-                    return res.status(500).json({ message: "Internal Server Error", data: "Failed to fetch users" });
-                }
-                return res.status(200).json({ message: "OK", data: users });
+        // ✅ fixing count=true behaviour (return {count:N})
+        if (req.query.count === 'true' || req.query.count === '1') {
+            return User.countDocuments(where).exec(function (err, count) {
+                if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to count users" });
+                return res.status(200).json({ count });
             });
         }
+
+        var query = User.find(where).select(select).sort(sort).skip(skip);
+        if (limit > 0) query = query.limit(limit);
+
+        query.exec(function (err, users) {
+            if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to fetch users" });
+            return res.status(200).json({ message: "OK", data: users });
+        });
     });
 
     usersRoute.post(function (req, res) {
@@ -85,34 +66,30 @@ module.exports = function (router) {
                 }
                 return res.status(500).json({ message: "Internal Server Error", data: "Failed to create user" });
             }
-            
+
             if (user.pendingTasks && user.pendingTasks.length > 0) {
                 Task.find({ _id: { $in: user.pendingTasks }, assignedUser: { $ne: "" } }).exec(function (err, assignedTasks) {
                     if (err) {
                         User.findByIdAndDelete(user._id).exec();
                         return res.status(500).json({ message: "Internal Server Error", data: "Failed to validate task assignments" });
                     }
-                    
+
                     if (assignedTasks && assignedTasks.length > 0) {
                         User.findByIdAndDelete(user._id).exec();
                         return res.status(400).json({ message: "Bad Request", data: "Some tasks are already assigned to other users" });
                     }
-                    
+
                     Task.find({ _id: { $in: user.pendingTasks }, completed: false }).exec(function (err, pendingTasksList) {
                         var taskIdsToUpdate = pendingTasksList.map(function(task) { return task._id.toString(); });
-                        
+
                         Task.updateMany(
                             { _id: { $in: taskIdsToUpdate } },
                             { $set: { assignedUser: user._id.toString(), assignedUserName: user.name } }
                         ).exec(function (err) {
-                            if (err) {
-                                console.error("Error updating tasks:", err);
-                            }
-                            
+                            if (err) console.error("Error updating tasks:", err);
+
                             User.findByIdAndUpdate(user._id, { pendingTasks: taskIdsToUpdate }, { new: true }).exec(function (err, updatedUser) {
-                                if (err) {
-                                    console.error("Error updating user's pendingTasks:", err);
-                                }
+                                if (err) console.error("Error updating user's pendingTasks:", err);
                                 return res.status(201).json({ message: "Created", data: updatedUser });
                             });
                         });
@@ -133,22 +110,13 @@ module.exports = function (router) {
 
         var select = {};
         if (req.query.select) {
-            try {
-                select = JSON.parse(req.query.select);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" });
-            }
+            try { select = JSON.parse(req.query.select); }
+            catch (e) { return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" }); }
         }
 
         var query = User.findById(req.params.id).select(select);
-        
         query.exec(function (err, user) {
-            if (err) {
-                return res.status(404).json({ message: "User Not Found", data: "Failed to find user" });
-            }
-            if (!user) {
-                return res.status(404).json({ message: "User Not Found", data: "User not found" });
-            }
+            if (err || !user) return res.status(404).json({ message: "User Not Found", data: "User not found" });
             return res.status(200).json({ message: "OK", data: user });
         });
     });
@@ -163,22 +131,18 @@ module.exports = function (router) {
         }
 
         User.findById(req.params.id).exec(function (err, existingUser) {
-            if (err || !existingUser) {
-                return res.status(404).json({ message: "User Not Found", data: "User not found" });
-            }
+            if (err || !existingUser) return res.status(404).json({ message: "User Not Found", data: "User not found" });
 
             var updatedPendingTasks = req.body.pendingTasks || [];
             var userIdStr = req.params.id;
-            
+
             Task.find({ _id: { $in: updatedPendingTasks }, assignedUser: { $nin: ["", userIdStr] } }).exec(function (err, assignedTasks) {
-                if (err) {
-                    return res.status(500).json({ message: "Internal Server Error", data: "Failed to validate task assignments" });
-                }
-                
+                if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to validate task assignments" });
+
                 if (assignedTasks && assignedTasks.length > 0) {
                     return res.status(400).json({ message: "Bad Request", data: "Some tasks are already assigned to other users" });
                 }
-                
+
                 User.findByIdAndUpdate(req.params.id, {
                     name: req.body.name,
                     email: req.body.email,
@@ -186,37 +150,24 @@ module.exports = function (router) {
                     dateCreated: req.body.dateCreated || existingUser.dateCreated
                 }, { new: true, runValidators: true }, function (err, user) {
                     if (err) {
-                        if (err.code === 11000) {
-                            return res.status(400).json({ message: "Bad Request", data: "Email already exists" });
-                        }
+                        if (err.code === 11000) return res.status(400).json({ message: "Bad Request", data: "Email already exists" });
                         return res.status(500).json({ message: "Internal Server Error", data: "Failed to update user" });
                     }
 
                     Task.find({ _id: { $in: user.pendingTasks }, completed: false }).exec(function (err, pendingTasksList) {
                         var taskIdsToUpdate = pendingTasksList.map(function(task) { return task._id.toString(); });
-                        
+
                         Task.updateMany(
                             { _id: { $in: taskIdsToUpdate } },
                             { $set: { assignedUser: user._id.toString(), assignedUserName: user.name } }
-                        ).exec(function (err) {
-                            if (err) {
-                                console.error("Error updating tasks:", err);
-                            }
-                        });
-                        
+                        ).exec();
+
                         Task.updateMany(
                             { _id: { $nin: taskIdsToUpdate }, assignedUser: user._id.toString() },
                             { $set: { assignedUser: "", assignedUserName: "unassigned" } }
-                        ).exec(function (err) {
-                            if (err) {
-                                console.error("Error unassigning tasks:", err);
-                            }
-                        });
-                        
+                        ).exec();
+
                         User.findByIdAndUpdate(user._id, { pendingTasks: taskIdsToUpdate }, { new: true }).exec(function (err, updatedUser) {
-                            if (err) {
-                                console.error("Error updating user's pendingTasks:", err);
-                            }
                             return res.status(200).json({ message: "OK", data: updatedUser || user });
                         });
                     });
@@ -231,22 +182,14 @@ module.exports = function (router) {
         }
 
         User.findByIdAndDelete(req.params.id, function (err, user) {
-            if (err) {
-                return res.status(404).json({ message: "User Not Found", data: "User not found" });
-            }
-            if (!user) {
-                return res.status(404).json({ message: "User Not Found", data: "User not found" });
-            }
+            if (err || !user) return res.status(404).json({ message: "User Not Found", data: "User not found" });
 
             Task.updateMany(
                 { assignedUser: req.params.id },
                 { $set: { assignedUser: "", assignedUserName: "unassigned" } }
-            ).exec(function (err) {
-                if (err) {
-                    console.error("Error unassigning tasks:", err);
-                }
-                return res.status(204).send();
-            });
+            ).exec();
+
+            return res.status(204).send();
         });
     });
 
