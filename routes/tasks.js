@@ -13,53 +13,36 @@ module.exports = function (router) {
         var limit = 100;
 
         if (req.query.where) {
-            try {
-                where = JSON.parse(req.query.where);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid where parameter", data: "JSON parsing error" });
-            }
+            try { where = JSON.parse(req.query.where); }
+            catch (e) { return res.status(400).json({ message: "Invalid where parameter", data: "JSON parsing error" }); }
         }
 
         if (req.query.sort) {
-            try {
-                sort = JSON.parse(req.query.sort);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid sort parameter", data: "JSON parsing error" });
-            }
+            try { sort = JSON.parse(req.query.sort); }
+            catch (e) { return res.status(400).json({ message: "Invalid sort parameter", data: "JSON parsing error" }); }
         }
 
         if (req.query.select) {
-            try {
-                select = JSON.parse(req.query.select);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" });
-            }
+            try { select = JSON.parse(req.query.select); }
+            catch (e) { return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" }); }
         }
 
-        if (req.query.skip) {
-            skip = parseInt(req.query.skip);
-        }
+        if (req.query.skip) skip = parseInt(req.query.skip);
+        if (req.query.limit) limit = parseInt(req.query.limit);
 
-        if (req.query.limit) {
-            limit = parseInt(req.query.limit);
-        }
-
-        if (req.query.count === 'true') {
-            Task.countDocuments(where).exec(function (err, count) {
-                if (err) {
-                    return res.status(500).json({ message: "Internal Server Error", data: "Failed to count tasks" });
-                }
-                return res.status(200).json({ message: "OK", data: { count: count } });
-            });
-        } else {
-            var query = Task.find(where).select(select).sort(sort).skip(skip).limit(limit);
-            query.exec(function (err, tasks) {
-                if (err) {
-                    return res.status(500).json({ message: "Internal Server Error", data: "Failed to fetch tasks" });
-                }
-                return res.status(200).json({ message: "OK", data: tasks });
+        // ✅ fixing count=true behaviour (return {count:N})
+        if (req.query.count === 'true' || req.query.count === '1') {
+            return Task.countDocuments(where).exec(function (err, count) {
+                if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to count tasks" });
+                return res.status(200).json({ count });
             });
         }
+
+        var query = Task.find(where).select(select).sort(sort).skip(skip).limit(limit);
+        query.exec(function (err, tasks) {
+            if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to fetch tasks" });
+            return res.status(200).json({ message: "OK", data: tasks });
+        });
     });
 
     tasksRoute.post(function (req, res) {
@@ -78,9 +61,7 @@ module.exports = function (router) {
         });
 
         newTask.save(function (err, task) {
-            if (err) {
-                return res.status(500).json({ message: "Internal Server Error", data: "Failed to create task" });
-            }
+            if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to create task" });
 
             if (task.assignedUser && task.assignedUser !== "" && !task.completed) {
                 User.findById(task.assignedUser).exec(function (err, user) {
@@ -88,11 +69,7 @@ module.exports = function (router) {
                         var pendingTasks = user.pendingTasks || [];
                         if (pendingTasks.indexOf(task._id.toString()) === -1) {
                             pendingTasks.push(task._id.toString());
-                            User.findByIdAndUpdate(task.assignedUser, { pendingTasks: pendingTasks }).exec(function (err) {
-                                if (err) {
-                                    console.error("Error updating user pending tasks:", err);
-                                }
-                            });
+                            User.findByIdAndUpdate(task.assignedUser, { pendingTasks }).exec();
                         }
                     }
                 });
@@ -111,22 +88,13 @@ module.exports = function (router) {
 
         var select = {};
         if (req.query.select) {
-            try {
-                select = JSON.parse(req.query.select);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" });
-            }
+            try { select = JSON.parse(req.query.select); }
+            catch (e) { return res.status(400).json({ message: "Invalid select parameter", data: "JSON parsing error" }); }
         }
 
         var query = Task.findById(req.params.id).select(select);
-        
         query.exec(function (err, task) {
-            if (err) {
-                return res.status(404).json({ message: "Task Not Found", data: "Failed to find task" });
-            }
-            if (!task) {
-                return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
-            }
+            if (err || !task) return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
             return res.status(200).json({ message: "OK", data: task });
         });
     });
@@ -141,9 +109,7 @@ module.exports = function (router) {
         }
 
         Task.findById(req.params.id).exec(function (err, existingTask) {
-            if (err || !existingTask) {
-                return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
-            }
+            if (err || !existingTask) return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
 
             var oldAssignedUser = existingTask.assignedUser;
             var newAssignedUser = req.body.assignedUser || "";
@@ -157,9 +123,7 @@ module.exports = function (router) {
                 assignedUserName: req.body.assignedUserName || "unassigned",
                 dateCreated: req.body.dateCreated || existingTask.dateCreated
             }, { new: true, runValidators: true }, function (err, task) {
-                if (err) {
-                    return res.status(500).json({ message: "Internal Server Error", data: "Failed to update task" });
-                }
+                if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to update task" });
 
                 if (oldAssignedUser && oldAssignedUser !== "" && oldAssignedUser !== newAssignedUser) {
                     User.findById(oldAssignedUser).exec(function (err, user) {
@@ -167,11 +131,7 @@ module.exports = function (router) {
                             var pendingTasks = user.pendingTasks.filter(function(taskId) {
                                 return taskId !== req.params.id;
                             });
-                            User.findByIdAndUpdate(oldAssignedUser, { pendingTasks: pendingTasks }).exec(function (err) {
-                                if (err) {
-                                    console.error("Error updating old user:", err);
-                                }
-                            });
+                            User.findByIdAndUpdate(oldAssignedUser, { pendingTasks }).exec();
                         }
                     });
                 }
@@ -182,11 +142,7 @@ module.exports = function (router) {
                             var pendingTasks = user.pendingTasks || [];
                             if (pendingTasks.indexOf(req.params.id) === -1) {
                                 pendingTasks.push(req.params.id);
-                                User.findByIdAndUpdate(newAssignedUser, { pendingTasks: pendingTasks }).exec(function (err) {
-                                    if (err) {
-                                        console.error("Error updating new user:", err);
-                                    }
-                                });
+                                User.findByIdAndUpdate(newAssignedUser, { pendingTasks }).exec();
                             }
                         }
                     });
@@ -196,11 +152,7 @@ module.exports = function (router) {
                             var pendingTasks = user.pendingTasks.filter(function(taskId) {
                                 return taskId !== req.params.id;
                             });
-                            User.findByIdAndUpdate(newAssignedUser, { pendingTasks: pendingTasks }).exec(function (err) {
-                                if (err) {
-                                    console.error("Error removing completed task from user:", err);
-                                }
-                            });
+                            User.findByIdAndUpdate(newAssignedUser, { pendingTasks }).exec();
                         }
                     });
                 }
@@ -216,12 +168,7 @@ module.exports = function (router) {
         }
 
         Task.findByIdAndDelete(req.params.id, function (err, task) {
-            if (err) {
-                return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
-            }
-            if (!task) {
-                return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
-            }
+            if (err || !task) return res.status(404).json({ message: "Task Not Found", data: "Task not found" });
 
             if (task.assignedUser && task.assignedUser !== "") {
                 User.findById(task.assignedUser).exec(function (err, user) {
@@ -229,22 +176,14 @@ module.exports = function (router) {
                         var pendingTasks = user.pendingTasks.filter(function(taskId) {
                             return taskId !== req.params.id;
                         });
-                        User.findByIdAndUpdate(task.assignedUser, { pendingTasks: pendingTasks }).exec(function (err) {
-                            if (err) {
-                                console.error("Error updating user:", err);
-                            }
-                            return res.status(204).send();
-                        });
-                    } else {
-                        return res.status(204).send();
+                        User.findByIdAndUpdate(task.assignedUser, { pendingTasks }).exec();
                     }
                 });
-            } else {
-                return res.status(204).send();
             }
+
+            return res.status(204).send();
         });
     });
 
     return router;
 };
-
