@@ -29,14 +29,18 @@ module.exports = function (router) {
 
         if (req.query.skip) skip = parseInt(req.query.skip);
         if (req.query.limit) limit = parseInt(req.query.limit);
-
-        // ✅ fixing count=true behaviour (return {count:N})
-        if (req.query.count === 'true' || req.query.count === '1') {
-            return Task.countDocuments(where).exec(function (err, count) {
-                if (err) return res.status(500).json({ message: "Internal Server Error", data: "Failed to count tasks" });
-                return res.status(200).json({ count });
-            });
+        // inside tasksRoute.get(...)
+        if (req.query.count === 'true') {
+          Task.countDocuments(where).exec(function (err, count) {
+            if (err) {
+              return res.status(500).json({ message: "Internal Server Error", data: "Failed to count tasks" });
+            }
+            // ✅ MP-required wrapper:
+            return res.status(200).json({ message: "OK", data: { count: count } });
+          });
+          return; // avoid falling through
         }
+
 
         var query = Task.find(where).select(select).sort(sort).skip(skip).limit(limit);
         query.exec(function (err, tasks) {
